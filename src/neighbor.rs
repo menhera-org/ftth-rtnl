@@ -7,9 +7,7 @@ pub(crate) type Server = AsyncWorldServer<RtnlNeighborRequest, RtnlNeighborRespo
 
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
-pub enum RtnlNeighborRequest {
-
-}
+pub enum RtnlNeighborRequest {}
 
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
@@ -27,9 +25,7 @@ pub struct RtnlNeighborClient {
 
 impl RtnlNeighborClient {
     pub(crate) fn new(client: Client) -> Self {
-        Self {
-            client,
-        }
+        Self { client }
     }
 }
 

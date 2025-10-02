@@ -1,6 +1,5 @@
 use ftth_rtnl::RtnlClient;
 
-
 fn main() -> std::io::Result<()> {
     let client = RtnlClient::new();
     let link_client = client.link();

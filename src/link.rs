@@ -16,17 +16,13 @@ pub struct MacAddr {
 
 impl MacAddr {
     pub const fn new(inner: [u8; 6]) -> Self {
-        Self {
-            inner,
-        }
+        Self { inner }
     }
 }
 
 impl Default for MacAddr {
     fn default() -> Self {
-        Self {
-            inner: [0; 6],
-        }
+        Self { inner: [0; 6] }
     }
 }
 
@@ -60,19 +56,10 @@ pub struct Interface {
 #[non_exhaustive]
 pub enum RtnlLinkRequest {
     InterfaceList,
-    InterfaceGet {
-        if_id: u32,
-    },
-    InterfaceGetByName {
-        if_name: String,
-    },
-    MacAddrGet {
-        if_id: u32,
-    },
-    MacAddrSet {
-        if_id: u32,
-        mac_addr: MacAddr,
-    },
+    InterfaceGet { if_id: u32 },
+    InterfaceGetByName { if_name: String },
+    MacAddrGet { if_id: u32 },
+    MacAddrSet { if_id: u32, mac_addr: MacAddr },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -94,30 +81,32 @@ pub struct RtnlLinkClient {
 
 impl RtnlLinkClient {
     pub(crate) fn new(client: Client) -> Self {
-        Self {
-            client,
-        }
+        Self { client }
     }
 
     pub fn interface_get_by_name(&self, name: &str) -> std::io::Result<Interface> {
         let name = name.to_owned();
-        let res = self.client.send_request(RtnlLinkRequest::InterfaceGetByName { if_name: name })?;
+        let res = self
+            .client
+            .send_request(RtnlLinkRequest::InterfaceGetByName { if_name: name })?;
         match res {
             RtnlLinkResponse::Interface(interface) => {
                 return Ok(interface);
-            },
-            _ => {},
+            }
+            _ => {}
         }
         Err(std::io::Error::other("Not found"))
     }
 
     pub fn mac_addr_get(&self, if_id: u32) -> std::io::Result<Option<MacAddr>> {
-        let res = self.client.send_request(RtnlLinkRequest::MacAddrGet { if_id })?;
+        let res = self
+            .client
+            .send_request(RtnlLinkRequest::MacAddrGet { if_id })?;
         match res {
             RtnlLinkResponse::MacAddr(addr) => {
                 return Ok(Some(addr));
-            },
-            _ => {},
+            }
+            _ => {}
         }
         Ok(None)
     }
@@ -127,8 +116,8 @@ impl RtnlLinkClient {
         match res {
             RtnlLinkResponse::InterfaceList(list) => {
                 return Ok(list);
-            },
-            _ => {},
+            }
+            _ => {}
         }
         Err(std::io::Error::other("Unknown error"))
     }
@@ -146,11 +135,14 @@ pub(crate) async fn run_server(mut server: Server, mut handle: rtnetlink::LinkHa
                         continue;
                     }
 
-                    respond(RtnlLinkResponse::Interface(Interface { if_id: if_index, if_name: if_name.to_owned() }));
+                    respond(RtnlLinkResponse::Interface(Interface {
+                        if_id: if_index,
+                        if_name: if_name.to_owned(),
+                    }));
                     continue 'reqloop;
                 }
                 respond(RtnlLinkResponse::NotFound);
-            },
+            }
             RtnlLinkRequest::MacAddrGet { if_id } => {
                 let if_index = if_id;
                 if if_index == 0 {
@@ -163,7 +155,9 @@ pub(crate) async fn run_server(mut server: Server, mut handle: rtnetlink::LinkHa
                     for link in response.attributes.iter() {
                         match link {
                             netlink_packet_route::link::LinkAttribute::Address(addr) => {
-                                respond(RtnlLinkResponse::MacAddr(MacAddr::new(addr[0..6].try_into().unwrap_or([0; 6]))));
+                                respond(RtnlLinkResponse::MacAddr(MacAddr::new(
+                                    addr[0..6].try_into().unwrap_or([0; 6]),
+                                )));
                                 continue 'reqloop;
                             }
                             _ => {}
@@ -171,7 +165,7 @@ pub(crate) async fn run_server(mut server: Server, mut handle: rtnetlink::LinkHa
                     }
                 }
                 respond(RtnlLinkResponse::NotFound);
-            },
+            }
             RtnlLinkRequest::InterfaceList => {
                 let mut interfaces = Vec::new();
                 let response = handle.get().execute();
@@ -192,7 +186,10 @@ pub(crate) async fn run_server(mut server: Server, mut handle: rtnetlink::LinkHa
                         continue;
                     }
 
-                    interfaces.push(Interface { if_id: if_index, if_name: if_name.unwrap() });
+                    interfaces.push(Interface {
+                        if_id: if_index,
+                        if_name: if_name.unwrap(),
+                    });
                 }
                 respond(RtnlLinkResponse::InterfaceList(interfaces));
             }

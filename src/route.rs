@@ -54,9 +54,7 @@ pub struct RtnlRouteClient {
 
 impl RtnlRouteClient {
     pub(crate) fn new(client: Client) -> Self {
-        Self {
-            client,
-        }
+        Self { client }
     }
 }
 

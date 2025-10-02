@@ -1,16 +1,13 @@
-
 pub mod address;
 pub mod link;
 pub mod neighbor;
 pub mod route;
 
-pub use ipnet::{Ipv4Net, Ipv6Net, IpNet};
-
+pub use ipnet::{IpNet, Ipv4Net, Ipv6Net};
 
 use ftth_common::channel::create_pair;
 
-use futures::{future::join_all, FutureExt};
-
+use futures::{FutureExt, future::join_all};
 
 #[derive(Debug, Clone)]
 pub struct RtnlClient {
@@ -28,7 +25,10 @@ impl RtnlClient {
         let (route_tx, route_rx) = create_pair();
 
         std::thread::spawn(move || {
-            let rt = match tokio::runtime::Builder::new_multi_thread().enable_all().build() {
+            let rt = match tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .build()
+            {
                 Ok(rt) => rt,
                 Err(e) => {
                     log::error!("Tokio runtime building error: {}", e);

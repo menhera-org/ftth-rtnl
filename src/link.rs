@@ -7,6 +7,7 @@ use futures::TryStreamExt;
 use std::fmt::{Debug, Display};
 use std::io::{self, ErrorKind};
 
+use netlink_packet_route::link::LinkFlags;
 use rtnetlink::{LinkMessageBuilder, LinkUnspec};
 
 pub(crate) type Client = AsyncWorldClient<RtnlLinkRequest, RtnlLinkResponse>;
@@ -69,6 +70,7 @@ pub enum RtnlLinkRequest {
     InterfaceSetArp { if_id: u32, enable: bool },
     InterfaceSetMtu { if_id: u32, mtu: u32 },
     InterfaceRename { if_id: u32, if_name: String },
+    InterfaceSetAllMulticast { if_id: u32, enable: bool },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -208,6 +210,20 @@ impl RtnlLinkClient {
             .client
             .send_request(RtnlLinkRequest::MacAddrSet { if_id, mac_addr })?;
         handle_status_response("Set MAC address", res)
+    }
+
+    pub fn interface_set_all_multicast(&self, if_id: u32, enable: bool) -> io::Result<()> {
+        let res = self
+            .client
+            .send_request(RtnlLinkRequest::InterfaceSetAllMulticast { if_id, enable })?;
+        handle_status_response(
+            if enable {
+                "Enable all-multicast"
+            } else {
+                "Disable all-multicast"
+            },
+            res,
+        )
     }
 
     pub fn interface_list(&self) -> std::io::Result<Vec<Interface>> {
@@ -462,6 +478,30 @@ pub(crate) async fn run_server(mut server: Server, mut handle: rtnetlink::LinkHa
                 let result = apply_link_set(&handle, if_id, |builder| builder.name(new_name)).await;
                 let op_desc = format!("rename interface to {}", if_name);
                 respond(map_link_result(result, &op_desc, if_id));
+            }
+            RtnlLinkRequest::InterfaceSetAllMulticast { if_id, enable } => {
+                if if_id == 0 {
+                    respond(RtnlLinkResponse::NotFound);
+                    continue 'reqloop;
+                }
+
+                let op_desc = if enable {
+                    "enable all-multicast mode"
+                } else {
+                    "disable all-multicast mode"
+                };
+
+                let mut message = LinkMessageBuilder::<LinkUnspec>::new().index(if_id).build();
+                if enable {
+                    message.header.flags |= LinkFlags::Allmulti;
+                } else {
+                    message.header.flags.remove(LinkFlags::Allmulti);
+                }
+                message.header.change_mask |= LinkFlags::Allmulti;
+
+                let result = handle.set(message).execute().await;
+
+                respond(map_link_result(result, op_desc, if_id));
             }
             _ => respond(RtnlLinkResponse::NotImplemented),
         }

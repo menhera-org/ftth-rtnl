@@ -367,6 +367,13 @@ enum Command {
         #[arg(value_parser = parse_bool_flag)]
         enable: bool,
     },
+    /// Enable or disable all-multicast mode
+    SetAllMulticast {
+        /// Interface name
+        interface: String,
+        #[arg(value_parser = parse_bool_flag)]
+        enable: bool,
+    },
     /// Enable or disable ARP
     SetArp {
         /// Interface name
@@ -415,6 +422,9 @@ fn main() -> io::Result<()> {
         Command::Show { interface } => run_show(&client, &interface),
         Command::SetState { interface, up } => run_set_state(&client, &interface, up),
         Command::SetPromisc { interface, enable } => run_set_promisc(&client, &interface, enable),
+        Command::SetAllMulticast { interface, enable } => {
+            run_set_all_multicast(&client, &interface, enable)
+        }
         Command::SetArp { interface, enable } => run_set_arp(&client, &interface, enable),
         Command::SetMtu { interface, mtu } => run_set_mtu(&client, &interface, mtu),
         Command::GetMtu { interface } => run_get_mtu(&client, &interface),
@@ -484,6 +494,18 @@ fn run_set_promisc(client: &RtnlClient, interface: &str, enable: bool) -> io::Re
     link_client.interface_set_promiscuous(iface.if_id, enable)?;
     println!(
         "Interface {} promiscuous mode {}",
+        iface.if_name,
+        if enable { "enabled" } else { "disabled" }
+    );
+    Ok(())
+}
+
+fn run_set_all_multicast(client: &RtnlClient, interface: &str, enable: bool) -> io::Result<()> {
+    let link_client = client.link();
+    let iface = link_client.interface_get_by_name(interface)?;
+    link_client.interface_set_all_multicast(iface.if_id, enable)?;
+    println!(
+        "Interface {} all-multicast {}",
         iface.if_name,
         if enable { "enabled" } else { "disabled" }
     );

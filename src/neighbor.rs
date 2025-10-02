@@ -4,6 +4,7 @@ use std::io::{self, ErrorKind};
 use std::net::IpAddr;
 
 use ftth_common::channel::{AsyncWorldClient, AsyncWorldServer};
+use futures::TryStreamExt;
 use log::warn;
 use netlink_packet_route::neighbour::{NeighbourAddress, NeighbourAttribute, NeighbourMessage};
 use netlink_packet_route::{AddressFamily, route::RouteType};
@@ -37,6 +38,13 @@ pub enum RtnlNeighborRequest {
     Add(NeighborEntry),
     Change(NeighborEntry),
     Delete(NeighborDelete),
+    List {
+        if_id: Option<u32>,
+    },
+    Get {
+        destination: IpAddr,
+        if_id: Option<u32>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -46,6 +54,8 @@ pub enum RtnlNeighborResponse {
     Failed,
     NotImplemented,
     NotFound,
+    Neighbors(Vec<NeighborEntry>),
+    Neighbor(NeighborEntry),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -76,6 +86,35 @@ impl RtnlNeighborClient {
             .send_request(RtnlNeighborRequest::Delete(entry))?;
         handle_neighbor_response("Neighbor delete", res, false)
     }
+
+    pub fn list(&self, if_id: Option<u32>) -> io::Result<Vec<NeighborEntry>> {
+        match self
+            .client
+            .send_request(RtnlNeighborRequest::List { if_id })?
+        {
+            RtnlNeighborResponse::Neighbors(entries) => Ok(entries),
+            other => Err(io::Error::other(format!(
+                "Unexpected response for neighbor list: {:?}",
+                other
+            ))),
+        }
+    }
+
+    pub fn get(&self, destination: IpAddr, if_id: Option<u32>) -> io::Result<NeighborEntry> {
+        match self
+            .client
+            .send_request(RtnlNeighborRequest::Get { destination, if_id })?
+        {
+            RtnlNeighborResponse::Neighbor(entry) => Ok(entry),
+            RtnlNeighborResponse::NotFound => {
+                Err(io::Error::new(ErrorKind::NotFound, "Neighbor not found"))
+            }
+            other => Err(io::Error::other(format!(
+                "Unexpected response for neighbor get: {:?}",
+                other
+            ))),
+        }
+    }
 }
 
 pub(crate) async fn run_server(mut server: Server, handle: rtnetlink::NeighbourHandle) {
@@ -86,6 +125,10 @@ pub(crate) async fn run_server(mut server: Server, handle: rtnetlink::NeighbourH
                 add_or_change_neighbor(&handle, entry, true).await
             }
             RtnlNeighborRequest::Delete(entry) => delete_neighbor(&handle, entry).await,
+            RtnlNeighborRequest::List { if_id } => list_neighbors(&handle, if_id).await,
+            RtnlNeighborRequest::Get { destination, if_id } => {
+                get_neighbor(&handle, destination, if_id).await
+            }
         };
         respond(response);
     }
@@ -108,6 +151,10 @@ fn handle_neighbor_response(
             ErrorKind::Unsupported,
             format!("{} is not implemented", operation),
         )),
+        other => Err(io::Error::other(format!(
+            "{} returned unexpected response: {:?}",
+            operation, other
+        ))),
     }
 }
 
@@ -214,4 +261,110 @@ fn build_delete_message(entry: &NeighborDelete) -> NeighbourMessage {
     }
 
     message
+}
+
+async fn list_neighbors(
+    handle: &rtnetlink::NeighbourHandle,
+    if_id: Option<u32>,
+) -> RtnlNeighborResponse {
+    match fetch_neighbors(handle).await {
+        Ok(entries) => {
+            let filtered: Vec<_> = entries
+                .into_iter()
+                .filter(|entry| if_id.map_or(true, |id| entry.if_id == id))
+                .collect();
+            RtnlNeighborResponse::Neighbors(filtered)
+        }
+        Err(err) => {
+            warn!("Neighbor list failed: {}", err);
+            RtnlNeighborResponse::Failed
+        }
+    }
+}
+
+fn neighbor_from_message(message: NeighbourMessage) -> Option<NeighborEntry> {
+    let NeighbourMessage {
+        header, attributes, ..
+    } = message;
+
+    let mut destination_attr = None;
+    let mut link_address = None;
+
+    for attr in attributes {
+        match attr {
+            NeighbourAttribute::Destination(addr) => destination_attr = Some(addr),
+            NeighbourAttribute::LinkLocalAddress(addr) => link_address = Some(addr),
+            _ => {}
+        }
+    }
+
+    let destination_attr = destination_attr?;
+    let destination = match destination_attr {
+        NeighbourAddress::Inet(addr) => IpAddr::V4(addr),
+        NeighbourAddress::Inet6(addr) => IpAddr::V6(addr),
+        NeighbourAddress::Other(_) => return None,
+        _ => return None,
+    };
+
+    let state = match header.state {
+        NeighbourState::None => None,
+        other => Some(other),
+    };
+
+    let flags = if header.flags.is_empty() {
+        None
+    } else {
+        Some(header.flags)
+    };
+
+    Some(NeighborEntry {
+        if_id: header.ifindex,
+        destination,
+        link_address,
+        state,
+        flags,
+    })
+}
+
+async fn get_neighbor(
+    handle: &rtnetlink::NeighbourHandle,
+    destination: IpAddr,
+    if_id: Option<u32>,
+) -> RtnlNeighborResponse {
+    match fetch_neighbors(handle).await {
+        Ok(entries) => {
+            let neighbor = entries.into_iter().find(|entry| {
+                if entry.destination != destination {
+                    return false;
+                }
+                if let Some(index) = if_id {
+                    if entry.if_id != index {
+                        return false;
+                    }
+                }
+                true
+            });
+            match neighbor {
+                Some(entry) => RtnlNeighborResponse::Neighbor(entry),
+                None => RtnlNeighborResponse::NotFound,
+            }
+        }
+        Err(err) => {
+            warn!("Neighbor get failed: {}", err);
+            RtnlNeighborResponse::Failed
+        }
+    }
+}
+
+async fn fetch_neighbors(
+    handle: &rtnetlink::NeighbourHandle,
+) -> Result<Vec<NeighborEntry>, rtnetlink::Error> {
+    let messages = handle.get().execute().try_collect::<Vec<_>>().await?;
+    let mut entries = Vec::new();
+    for message in messages {
+        if let Some(entry) = neighbor_from_message(message) {
+            entries.push(entry);
+        }
+    }
+    Ok(entries)
 }

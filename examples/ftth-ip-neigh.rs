@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::io;
 use std::net::IpAddr;
 
@@ -13,12 +14,38 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    /// List neighbour entries
+    List(NeighbourListArgs),
+    /// Show details for a single neighbour
+    Get(NeighbourGetArgs),
     /// Add a neighbour entry
     Add(NeighbourArgs),
     /// Change an existing neighbour entry
     Change(NeighbourArgs),
     /// Delete a neighbour entry
     Delete(NeighbourDeleteArgs),
+}
+
+#[derive(Args, Clone)]
+struct NeighbourListArgs {
+    /// Interface name to filter neighbours
+    #[arg(long)]
+    dev: Option<String>,
+    /// Interface index to filter neighbours
+    #[arg(long, conflicts_with = "dev")]
+    if_id: Option<u32>,
+}
+
+#[derive(Args, Clone)]
+struct NeighbourGetArgs {
+    /// Destination IP address to query
+    destination: IpAddr,
+    /// Interface name
+    #[arg(long)]
+    dev: Option<String>,
+    /// Interface index
+    #[arg(long, conflicts_with = "dev")]
+    if_id: Option<u32>,
 }
 
 #[derive(Args, Clone)]
@@ -85,10 +112,29 @@ fn main() -> io::Result<()> {
     let client = RtnlClient::new();
 
     match cli.command {
+        Command::List(args) => run_list(&client, args),
+        Command::Get(args) => run_get(&client, args),
         Command::Add(args) => run_add(&client, args),
         Command::Change(args) => run_change(&client, args),
         Command::Delete(args) => run_delete(&client, args),
     }
+}
+
+fn run_list(client: &RtnlClient, args: NeighbourListArgs) -> io::Result<()> {
+    let if_id = resolve_interface_optional(client, args.if_id, args.dev)?;
+    let link_map = build_interface_map(client)?;
+    for entry in client.neighbor().list(if_id)? {
+        print_neighbor(&entry, &link_map);
+    }
+    Ok(())
+}
+
+fn run_get(client: &RtnlClient, args: NeighbourGetArgs) -> io::Result<()> {
+    let if_id = resolve_interface_optional(client, args.if_id, args.dev)?;
+    let link_map = build_interface_map(client)?;
+    let entry = client.neighbor().get(args.destination, if_id)?;
+    print_neighbor(&entry, &link_map);
+    Ok(())
 }
 
 fn run_add(client: &RtnlClient, args: NeighbourArgs) -> io::Result<()> {
@@ -151,6 +197,20 @@ fn resolve_interface(
     }
 }
 
+fn resolve_interface_optional(
+    client: &RtnlClient,
+    if_id: Option<u32>,
+    dev: Option<String>,
+) -> io::Result<Option<u32>> {
+    if let Some(index) = if_id {
+        return Ok(Some(index));
+    }
+    if let Some(name) = dev {
+        return Ok(Some(client.link().interface_get_by_name(&name)?.if_id));
+    }
+    Ok(None)
+}
+
 fn parse_lladdr(value: Option<&str>) -> io::Result<Option<Vec<u8>>> {
     match value {
         Some(s) => {
@@ -197,4 +257,38 @@ impl StateArg {
             StateArg::None => NeighbourState::None,
         }
     }
+}
+
+fn build_interface_map(client: &RtnlClient) -> io::Result<HashMap<u32, String>> {
+    let mut map = HashMap::new();
+    for iface in client.link().interface_list()? {
+        map.insert(iface.if_id, iface.if_name);
+    }
+    Ok(map)
+}
+
+fn print_neighbor(entry: &NeighborEntry, links: &HashMap<u32, String>) {
+    let dev = links
+        .get(&entry.if_id)
+        .map(|name| name.as_str())
+        .unwrap_or("-");
+    print!("{} dev {}", entry.destination, dev);
+    if let Some(ref lladdr) = entry.link_address {
+        print!(" lladdr {}", format_link_address(lladdr));
+    }
+    if let Some(state) = entry.state {
+        print!(" state {:?}", state);
+    }
+    if let Some(flags) = entry.flags {
+        print!(" flags {:?}", flags);
+    }
+    println!();
+}
+
+fn format_link_address(bytes: &[u8]) -> String {
+    bytes
+        .iter()
+        .map(|byte| format!("{:02x}", byte))
+        .collect::<Vec<_>>()
+        .join(":")
 }

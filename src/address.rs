@@ -8,7 +8,7 @@ use futures::TryStreamExt;
 use ftth_common::channel::{AsyncWorldClient, AsyncWorldServer};
 use netlink_packet_route::{
     AddressFamily,
-    address::{AddressAttribute, AddressMessage},
+    address::{AddressAttribute, AddressMessage, AddressScope},
 };
 
 pub(crate) type Client = AsyncWorldClient<RtnlAddressRequest, RtnlAddressResponse>;
@@ -17,12 +17,30 @@ pub(crate) type Server = AsyncWorldServer<RtnlAddressRequest, RtnlAddressRespons
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub enum RtnlAddressRequest {
-    Ipv4AddrsGet { if_id: u32 },
-    Ipv6AddrsGet { if_id: u32 },
-    Ipv4AddrSet { prefix: crate::Ipv4Net, if_id: u32 },
-    Ipv6AddrSet { prefix: crate::Ipv6Net, if_id: u32 },
-    Ipv4AddrDel { prefix: crate::Ipv4Net, if_id: u32 },
-    Ipv6AddrDel { prefix: crate::Ipv6Net, if_id: u32 },
+    Ipv4AddrsGet {
+        if_id: u32,
+        scope: Option<AddressScope>,
+    },
+    Ipv6AddrsGet {
+        if_id: u32,
+        scope: Option<AddressScope>,
+    },
+    Ipv4AddrSet {
+        prefix: crate::Ipv4Net,
+        if_id: u32,
+    },
+    Ipv6AddrSet {
+        prefix: crate::Ipv6Net,
+        if_id: u32,
+    },
+    Ipv4AddrDel {
+        prefix: crate::Ipv4Net,
+        if_id: u32,
+    },
+    Ipv6AddrDel {
+        prefix: crate::Ipv6Net,
+        if_id: u32,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -47,8 +65,17 @@ impl RtnlAddressClient {
     }
 
     pub fn ipv4_addrs_get(&self, if_id: Option<u32>) -> std::io::Result<Vec<Ipv4Addr>> {
+        self.ipv4_addrs_get_with_scope(if_id, None)
+    }
+
+    pub fn ipv4_addrs_get_with_scope(
+        &self,
+        if_id: Option<u32>,
+        scope: Option<AddressScope>,
+    ) -> std::io::Result<Vec<Ipv4Addr>> {
         let res = self.client.send_request(RtnlAddressRequest::Ipv4AddrsGet {
             if_id: if_id.unwrap_or(0),
+            scope,
         })?;
         match res {
             RtnlAddressResponse::Ipv4Addrs(addrs) => {
@@ -60,8 +87,17 @@ impl RtnlAddressClient {
     }
 
     pub fn ipv6_addrs_get(&self, if_id: Option<u32>) -> std::io::Result<Vec<Ipv6Addr>> {
+        self.ipv6_addrs_get_with_scope(if_id, None)
+    }
+
+    pub fn ipv6_addrs_get_with_scope(
+        &self,
+        if_id: Option<u32>,
+        scope: Option<AddressScope>,
+    ) -> std::io::Result<Vec<Ipv6Addr>> {
         let res = self.client.send_request(RtnlAddressRequest::Ipv6AddrsGet {
             if_id: if_id.unwrap_or(0),
+            scope,
         })?;
         match res {
             RtnlAddressResponse::Ipv6Addrs(addrs) => {
@@ -184,7 +220,7 @@ fn handle_basic_response(
 pub(crate) async fn run_server(mut server: Server, handle: rtnetlink::AddressHandle) {
     while let Some((req, respond)) = server.accept().await {
         match req {
-            RtnlAddressRequest::Ipv4AddrsGet { if_id } => {
+            RtnlAddressRequest::Ipv4AddrsGet { if_id, scope } => {
                 let if_index = if_id;
                 let mut addrs = Vec::new();
                 let mut req = handle.get();
@@ -198,6 +234,9 @@ pub(crate) async fn run_server(mut server: Server, handle: rtnetlink::AddressHan
                     if response.header.family != netlink_packet_route::AddressFamily::Inet {
                         continue;
                     }
+                    if scope.map_or(false, |filter| response.header.scope != filter) {
+                        continue;
+                    }
                     for addr in response.attributes.iter() {
                         if let netlink_packet_route::address::AddressAttribute::Address(
                             std::net::IpAddr::V4(addr),
@@ -209,7 +248,7 @@ pub(crate) async fn run_server(mut server: Server, handle: rtnetlink::AddressHan
                 }
                 respond(RtnlAddressResponse::Ipv4Addrs(addrs));
             }
-            RtnlAddressRequest::Ipv6AddrsGet { if_id } => {
+            RtnlAddressRequest::Ipv6AddrsGet { if_id, scope } => {
                 let if_index = if_id;
                 let mut addrs = Vec::new();
                 let mut req = handle.get();
@@ -221,6 +260,9 @@ pub(crate) async fn run_server(mut server: Server, handle: rtnetlink::AddressHan
                 futures::pin_mut!(response);
                 while let Ok(Some(response)) = response.try_next().await {
                     if response.header.family != netlink_packet_route::AddressFamily::Inet6 {
+                        continue;
+                    }
+                    if scope.map_or(false, |filter| response.header.scope != filter) {
                         continue;
                     }
                     for addr in response.attributes.iter() {

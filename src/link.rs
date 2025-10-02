@@ -347,9 +347,12 @@ pub(crate) async fn run_server(mut server: Server, mut handle: rtnetlink::LinkHa
                     for link in response.attributes.iter() {
                         match link {
                             netlink_packet_route::link::LinkAttribute::Address(addr) => {
-                                respond(RtnlLinkResponse::MacAddr(MacAddr::new(
-                                    addr[0..6].try_into().unwrap_or([0; 6]),
-                                )));
+                                if addr.len() < 6 {
+                                    continue;
+                                }
+                                let mut mac_bytes = [0u8; 6];
+                                mac_bytes.copy_from_slice(&addr[..6]);
+                                respond(RtnlLinkResponse::MacAddr(MacAddr::new(mac_bytes)));
                                 continue 'reqloop;
                             }
                             _ => {}
@@ -392,14 +395,16 @@ pub(crate) async fn run_server(mut server: Server, mut handle: rtnetlink::LinkHa
                         }
                     }
 
-                    if if_index == 0 || if_name.is_none() {
-                        continue;
-                    }
+                    if let Some(name) = if_name {
+                        if if_index == 0 {
+                            continue;
+                        }
 
-                    interfaces.push(Interface {
-                        if_id: if_index,
-                        if_name: if_name.unwrap(),
-                    });
+                        interfaces.push(Interface {
+                            if_id: if_index,
+                            if_name: name,
+                        });
+                    }
                 }
                 respond(RtnlLinkResponse::InterfaceList(interfaces));
             }

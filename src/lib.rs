@@ -6,8 +6,10 @@ pub mod virtual_interface;
 
 pub use ipnet::{IpNet, Ipv4Net, Ipv6Net};
 pub use neighbor::{NeighborDelete, NeighborEntry};
+pub use netlink_packet_route::address::AddressScope;
 pub use netlink_packet_route::neighbour::{NeighbourFlags, NeighbourState};
-pub use route::{Ipv4Route, Ipv6Route};
+pub use netlink_packet_route::route::RouteNextHopFlags;
+pub use route::{Ipv4Route, Ipv6Route, RouteNextHopInfo};
 pub use virtual_interface::{
     Gre6Config, GreConfig, Ip6TnlConfig, IpIpConfig, VirtualInterfaceDelete, VirtualInterfaceKind,
     VirtualInterfaceSpec, VirtualInterfaceUpdate, VlanConfig,

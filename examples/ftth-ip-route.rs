@@ -1,9 +1,9 @@
 use std::collections::HashMap;
 use std::io::{self, ErrorKind};
-use std::net::{Ipv4Addr, Ipv6Addr};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
-use ftth_rtnl::{Ipv4Route, Ipv6Route, RtnlClient};
+use ftth_rtnl::{Ipv4Route, Ipv6Route, RouteNextHopFlags, RtnlClient};
 use ipnet::IpNet;
 
 #[derive(Parser)]
@@ -30,8 +30,12 @@ enum Command {
     Del6(RouteV6DeleteArgs),
     /// Lookup the selected IPv4 route
     Get4 { destination: Ipv4Addr },
+    /// Lookup the IPv4 route matching the given prefix
+    Get4Prefix { prefix: String },
     /// Lookup the selected IPv6 route
     Get6 { destination: Ipv6Addr },
+    /// Lookup the IPv6 route matching the given prefix
+    Get6Prefix { prefix: String },
 }
 
 #[derive(ValueEnum, Clone, Copy)]
@@ -44,9 +48,9 @@ enum RouteFamily {
 struct RouteV4Args {
     /// Destination prefix in CIDR notation (e.g. 192.0.2.0/24)
     prefix: String,
-    /// Gateway IPv4 address
+    /// Gateway IP address (IPv4 or IPv6 link-local via inet6)
     #[arg(long)]
-    via: Option<Ipv4Addr>,
+    via: Option<IpAddr>,
     /// Output interface name
     #[arg(long)]
     dev: Option<String>,
@@ -92,7 +96,7 @@ struct RouteV6Args {
 struct RouteV4DeleteArgs {
     prefix: String,
     #[arg(long)]
-    via: Option<Ipv4Addr>,
+    via: Option<IpAddr>,
     #[arg(long)]
     dev: Option<String>,
     #[arg(long)]
@@ -121,7 +125,9 @@ fn main() -> io::Result<()> {
         Command::Del4(args) => run_del4(&client, args),
         Command::Del6(args) => run_del6(&client, args),
         Command::Get4 { destination } => run_get4(&client, destination),
+        Command::Get4Prefix { prefix } => run_get4_prefix(&client, &prefix),
         Command::Get6 { destination } => run_get6(&client, destination),
+        Command::Get6Prefix { prefix } => run_get6_prefix(&client, &prefix),
     }
 }
 
@@ -218,8 +224,38 @@ fn run_get4(client: &RtnlClient, destination: Ipv4Addr) -> io::Result<()> {
     print_ipv4_route(&route, &link_map)
 }
 
+fn run_get4_prefix(client: &RtnlClient, prefix: &str) -> io::Result<()> {
+    let net = match prefix
+        .parse::<IpNet>()
+        .map_err(|e| io::Error::new(ErrorKind::InvalidInput, e))?
+    {
+        IpNet::V4(net) => net,
+        IpNet::V6(_) => {
+            return Err(io::Error::other("Expected IPv4 prefix"));
+        }
+    };
+    let route = client.route().ipv4_route_get_by_prefix(net)?;
+    let link_map = build_interface_map(client)?;
+    print_ipv4_route(&route, &link_map)
+}
+
 fn run_get6(client: &RtnlClient, destination: Ipv6Addr) -> io::Result<()> {
     let route = client.route().ipv6_route_get(destination)?;
+    let link_map = build_interface_map(client)?;
+    print_ipv6_route(&route, &link_map)
+}
+
+fn run_get6_prefix(client: &RtnlClient, prefix: &str) -> io::Result<()> {
+    let net = match prefix
+        .parse::<IpNet>()
+        .map_err(|e| io::Error::new(ErrorKind::InvalidInput, e))?
+    {
+        IpNet::V6(net) => net,
+        IpNet::V4(_) => {
+            return Err(io::Error::other("Expected IPv6 prefix"));
+        }
+    };
+    let route = client.route().ipv6_route_get_by_prefix(net)?;
     let link_map = build_interface_map(client)?;
     print_ipv6_route(&route, &link_map)
 }
@@ -227,7 +263,7 @@ fn run_get6(client: &RtnlClient, destination: Ipv6Addr) -> io::Result<()> {
 fn build_ipv4_route(
     client: &RtnlClient,
     prefix: &str,
-    gateway: Option<Ipv4Addr>,
+    gateway: Option<IpAddr>,
     dev: Option<String>,
     source: Option<Ipv4Addr>,
     metric: Option<u32>,
@@ -250,6 +286,7 @@ fn build_ipv4_route(
         metric,
         table,
         route: net,
+        nexthops: Vec::new(),
     })
 }
 
@@ -274,11 +311,12 @@ fn build_ipv6_route(
     let if_id = resolve_interface(client, dev)?;
     Ok(Ipv6Route {
         if_id,
-        gateway,
+        gateway: gateway.map(IpAddr::V6),
         source,
         metric,
         table,
         route: net,
+        nexthops: Vec::new(),
     })
 }
 
@@ -298,35 +336,128 @@ fn build_interface_map(client: &RtnlClient) -> io::Result<HashMap<u32, String>> 
 }
 
 fn print_ipv4_route(route: &Ipv4Route, links: &HashMap<u32, String>) -> io::Result<()> {
-    let dev = route.if_id.and_then(|id| links.get(&id).cloned());
-    let via = route
-        .gateway
-        .map(|g| g.to_string())
-        .unwrap_or_else(|| "direct".into());
-    let dev_str = dev.unwrap_or_else(|| "-".into());
     let metric = route.metric.map_or("-".into(), |m| m.to_string());
     let table = route.table.map_or("main".into(), |t| t.to_string());
     let source = route.source.map_or("-".into(), |s| s.to_string());
-    println!(
-        "{} via {} dev {} src {} metric {} table {}",
-        route.route, via, dev_str, source, metric, table,
-    );
+
+    let format_via = |gateway: Option<IpAddr>| -> String {
+        match gateway {
+            Some(IpAddr::V6(addr)) => format!("inet6 {}", addr),
+            Some(IpAddr::V4(addr)) => addr.to_string(),
+            None => "direct".into(),
+        }
+    };
+
+    if route.nexthops.is_empty() {
+        let dev = route.if_id.and_then(|id| links.get(&id).cloned());
+        let via = format_via(route.gateway);
+        let dev_str = dev.unwrap_or_else(|| "-".into());
+        println!(
+            "{} via {} dev {} src {} metric {} table {}",
+            route.route, via, dev_str, source, metric, table,
+        );
+    } else {
+        println!(
+            "{} src {} metric {} table {}",
+            route.route, source, metric, table
+        );
+        for nh in &route.nexthops {
+            let dev = nh
+                .if_id
+                .and_then(|id| links.get(&id).cloned())
+                .unwrap_or_else(|| "-".into());
+            let via = format_via(nh.gateway);
+            let flags = format_next_hop_flags(nh.flags);
+            if flags.is_empty() {
+                println!("  nexthop via {} dev {} weight {}", via, dev, nh.weight);
+            } else {
+                println!(
+                    "  nexthop via {} dev {} weight {} {}",
+                    via, dev, nh.weight, flags
+                );
+            }
+        }
+    }
     Ok(())
 }
 
 fn print_ipv6_route(route: &Ipv6Route, links: &HashMap<u32, String>) -> io::Result<()> {
-    let dev = route.if_id.and_then(|id| links.get(&id).cloned());
-    let via = route
-        .gateway
-        .map(|g| g.to_string())
-        .unwrap_or_else(|| "direct".into());
-    let dev_str = dev.unwrap_or_else(|| "-".into());
     let metric = route.metric.map_or("-".into(), |m| m.to_string());
     let table = route.table.map_or("main".into(), |t| t.to_string());
     let source = route.source.map_or("-".into(), |s| s.to_string());
-    println!(
-        "{} via {} dev {} src {} metric {} table {}",
-        route.route, via, dev_str, source, metric, table,
-    );
+
+    let format_via = |gateway: Option<IpAddr>| -> String {
+        match gateway {
+            Some(IpAddr::V4(addr)) => format!("inet {}", addr),
+            Some(IpAddr::V6(addr)) => addr.to_string(),
+            None => "direct".into(),
+        }
+    };
+
+    if route.nexthops.is_empty() {
+        let dev = route.if_id.and_then(|id| links.get(&id).cloned());
+        let via = format_via(route.gateway);
+        let dev_str = dev.unwrap_or_else(|| "-".into());
+        println!(
+            "{} via {} dev {} src {} metric {} table {}",
+            route.route, via, dev_str, source, metric, table,
+        );
+    } else {
+        println!(
+            "{} src {} metric {} table {}",
+            route.route, source, metric, table
+        );
+        for nh in &route.nexthops {
+            let dev = nh
+                .if_id
+                .and_then(|id| links.get(&id).cloned())
+                .unwrap_or_else(|| "-".into());
+            let via = format_via(nh.gateway);
+            let flags = format_next_hop_flags(nh.flags);
+            if flags.is_empty() {
+                println!("  nexthop via {} dev {} weight {}", via, dev, nh.weight);
+            } else {
+                println!(
+                    "  nexthop via {} dev {} weight {} {}",
+                    via, dev, nh.weight, flags
+                );
+            }
+        }
+    }
     Ok(())
+}
+
+fn format_next_hop_flags(flags: RouteNextHopFlags) -> String {
+    if flags.is_empty() {
+        return String::new();
+    }
+
+    let mut parts = Vec::new();
+    if flags.contains(RouteNextHopFlags::Dead) {
+        parts.push("dead");
+    }
+    if flags.contains(RouteNextHopFlags::Pervasive) {
+        parts.push("pervasive");
+    }
+    if flags.contains(RouteNextHopFlags::Onlink) {
+        parts.push("onlink");
+    }
+    if flags.contains(RouteNextHopFlags::Offload) {
+        parts.push("offload");
+    }
+    if flags.contains(RouteNextHopFlags::Linkdown) {
+        parts.push("linkdown");
+    }
+    if flags.contains(RouteNextHopFlags::Unresolved) {
+        parts.push("unresolved");
+    }
+    if flags.contains(RouteNextHopFlags::Trap) {
+        parts.push("trap");
+    }
+
+    if parts.is_empty() {
+        String::new()
+    } else {
+        format!("flags {}", parts.join(","))
+    }
 }

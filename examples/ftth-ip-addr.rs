@@ -1,7 +1,7 @@
 use std::io::{self, ErrorKind};
 
 use clap::{Parser, Subcommand, ValueEnum};
-use ftth_rtnl::{IpNet, RtnlClient};
+use ftth_rtnl::{AddressScope, IpNet, RtnlClient};
 
 #[derive(Parser)]
 #[command(author, version, about = "Minimal IP address management utility built on ftth-rtnl", long_about = None)]
@@ -20,6 +20,9 @@ enum Command {
         /// Limit the address family in the output
         #[arg(short = 'f', long, value_enum, default_value_t = AddressFamily::All)]
         family: AddressFamily,
+        /// Filter addresses by scope
+        #[arg(long, value_enum)]
+        scope: Option<ScopeArg>,
     },
     /// Add an IP address (in CIDR notation) to an interface
     Add {
@@ -44,6 +47,15 @@ enum AddressFamily {
     Ipv6,
 }
 
+#[derive(Copy, Clone, Debug, Eq, PartialEq, ValueEnum)]
+enum ScopeArg {
+    Universe,
+    Site,
+    Link,
+    Host,
+    Nowhere,
+}
+
 impl AddressFamily {
     fn includes_ipv4(self) -> bool {
         matches!(self, AddressFamily::All | AddressFamily::Ipv4)
@@ -59,13 +71,22 @@ fn main() -> io::Result<()> {
     let client = RtnlClient::new();
 
     match cli.command {
-        Command::List { interface, family } => run_list(&client, interface.as_deref(), family),
+        Command::List {
+            interface,
+            family,
+            scope,
+        } => run_list(&client, interface.as_deref(), family, scope),
         Command::Add { interface, prefix } => run_add(&client, &interface, &prefix),
         Command::Del { interface, prefix } => run_del(&client, &interface, &prefix),
     }
 }
 
-fn run_list(client: &RtnlClient, interface: Option<&str>, family: AddressFamily) -> io::Result<()> {
+fn run_list(
+    client: &RtnlClient,
+    interface: Option<&str>,
+    family: AddressFamily,
+    scope: Option<ScopeArg>,
+) -> io::Result<()> {
     let link_client = client.link();
     let addr_client = client.address();
 
@@ -79,11 +100,13 @@ fn run_list(client: &RtnlClient, interface: Option<&str>, family: AddressFamily)
         return Ok(());
     }
 
+    let scope = scope.map(ScopeArg::to_scope);
+
     for iface in interfaces {
         println!("{}: {}", iface.if_id, iface.if_name);
 
         if family.includes_ipv4() {
-            let addrs = addr_client.ipv4_addrs_get(Some(iface.if_id))?;
+            let addrs = addr_client.ipv4_addrs_get_with_scope(Some(iface.if_id), scope)?;
             if addrs.is_empty() {
                 println!("  IPv4: (none)");
             } else {
@@ -94,7 +117,7 @@ fn run_list(client: &RtnlClient, interface: Option<&str>, family: AddressFamily)
         }
 
         if family.includes_ipv6() {
-            let addrs = addr_client.ipv6_addrs_get(Some(iface.if_id))?;
+            let addrs = addr_client.ipv6_addrs_get_with_scope(Some(iface.if_id), scope)?;
             if addrs.is_empty() {
                 println!("  IPv6: (none)");
             } else {
@@ -153,4 +176,16 @@ fn run_del(client: &RtnlClient, interface: &str, prefix: &str) -> io::Result<()>
 fn parse_ip_net(s: &str) -> io::Result<IpNet> {
     s.parse::<IpNet>()
         .map_err(|err| io::Error::new(ErrorKind::InvalidInput, err))
+}
+
+impl ScopeArg {
+    fn to_scope(self) -> AddressScope {
+        match self {
+            ScopeArg::Universe => AddressScope::Universe,
+            ScopeArg::Site => AddressScope::Site,
+            ScopeArg::Link => AddressScope::Link,
+            ScopeArg::Host => AddressScope::Host,
+            ScopeArg::Nowhere => AddressScope::Nowhere,
+        }
+    }
 }

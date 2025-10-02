@@ -2,8 +2,13 @@ pub mod address;
 pub mod link;
 pub mod neighbor;
 pub mod route;
+pub mod virtual_interface;
 
 pub use ipnet::{IpNet, Ipv4Net, Ipv6Net};
+pub use virtual_interface::{
+    Gre6Config, GreConfig, Ip6TnlConfig, IpIpConfig, VirtualInterfaceDelete, VirtualInterfaceKind,
+    VirtualInterfaceSpec, VirtualInterfaceUpdate, VlanConfig,
+};
 
 use ftth_common::channel::create_pair;
 
@@ -15,6 +20,7 @@ pub struct RtnlClient {
     link: link::RtnlLinkClient,
     neighbor: neighbor::RtnlNeighborClient,
     route: route::RtnlRouteClient,
+    virtual_interface: virtual_interface::RtnlVirtualInterfaceClient,
 }
 
 impl RtnlClient {
@@ -23,6 +29,7 @@ impl RtnlClient {
         let (link_tx, link_rx) = create_pair();
         let (neighbor_tx, neighbor_rx) = create_pair();
         let (route_tx, route_rx) = create_pair();
+        let (virtual_interface_tx, virtual_interface_rx) = create_pair();
 
         std::thread::spawn(move || {
             let rt = match tokio::runtime::Builder::new_multi_thread()
@@ -47,6 +54,9 @@ impl RtnlClient {
                 futures.push(link::run_server(link_rx, handle.link()).boxed());
                 futures.push(neighbor::run_server(neighbor_rx, handle.neighbours()).boxed());
                 futures.push(route::run_server(route_rx, handle.route()).boxed());
+                futures.push(
+                    virtual_interface::run_server(virtual_interface_rx, handle.link()).boxed(),
+                );
 
                 join_all(futures).await;
 
@@ -59,6 +69,9 @@ impl RtnlClient {
             link: link::RtnlLinkClient::new(link_tx),
             neighbor: neighbor::RtnlNeighborClient::new(neighbor_tx),
             route: route::RtnlRouteClient::new(route_tx),
+            virtual_interface: virtual_interface::RtnlVirtualInterfaceClient::new(
+                virtual_interface_tx,
+            ),
         }
     }
 
@@ -76,5 +89,9 @@ impl RtnlClient {
 
     pub fn route(&self) -> route::RtnlRouteClient {
         self.route.clone()
+    }
+
+    pub fn virtual_interface(&self) -> virtual_interface::RtnlVirtualInterfaceClient {
+        self.virtual_interface.clone()
     }
 }

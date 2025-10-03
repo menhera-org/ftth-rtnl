@@ -46,7 +46,7 @@ struct VirtualInterfaceConfigureArgs {
     kind: VirtualInterfaceCreateKind,
     #[arg(long)]
     new_name: Option<String>,
-    #[arg(long, value_parser = parse_bool_flag)]
+    #[arg(long, value_parser = parse_bool_flag, action = clap::ArgAction::Set)]
     admin_up: Option<bool>,
 }
 
@@ -82,11 +82,11 @@ struct GreArgs {
     key: Option<u32>,
     #[arg(long)]
     encap_limit: Option<u8>,
-    #[arg(long, value_parser = parse_bool_flag, default_value = "true")]
+    #[arg(long, value_parser = parse_bool_flag, default_value = "true", action = clap::ArgAction::Set)]
     pmtudisc: bool,
-    #[arg(long, value_parser = parse_bool_flag, default_value = "false")]
+    #[arg(long, value_parser = parse_bool_flag, default_value = "false", action = clap::ArgAction::Set)]
     ignore_df: bool,
-    #[arg(long, value_parser = parse_bool_flag)]
+    #[arg(long, value_parser = parse_bool_flag, action = clap::ArgAction::Set)]
     up: Option<bool>,
 }
 
@@ -108,11 +108,11 @@ struct Gre6Args {
     key: Option<u32>,
     #[arg(long)]
     encap_limit: Option<u8>,
-    #[arg(long, value_parser = parse_bool_flag, default_value = "true")]
+    #[arg(long, value_parser = parse_bool_flag, default_value = "true", action = clap::ArgAction::Set)]
     pmtudisc: bool,
-    #[arg(long, value_parser = parse_bool_flag, default_value = "false")]
+    #[arg(long, value_parser = parse_bool_flag, default_value = "false", action = clap::ArgAction::Set)]
     ignore_df: bool,
-    #[arg(long, value_parser = parse_bool_flag)]
+    #[arg(long, value_parser = parse_bool_flag, action = clap::ArgAction::Set)]
     up: Option<bool>,
 }
 
@@ -132,9 +132,9 @@ struct IpIpArgs {
     tos: Option<u8>,
     #[arg(long)]
     encap_limit: Option<u8>,
-    #[arg(long, value_parser = parse_bool_flag, default_value = "true")]
+    #[arg(long, value_parser = parse_bool_flag, default_value = "true", action = clap::ArgAction::Set)]
     pmtudisc: bool,
-    #[arg(long, value_parser = parse_bool_flag)]
+    #[arg(long, value_parser = parse_bool_flag, action = clap::ArgAction::Set)]
     up: Option<bool>,
 }
 
@@ -156,9 +156,9 @@ struct Ip6TnlArgs {
     flow_label: Option<u32>,
     #[arg(long)]
     encap_limit: Option<u8>,
-    #[arg(long, value_parser = parse_bool_flag, default_value = "true")]
+    #[arg(long, value_parser = parse_bool_flag, default_value = "true", action = clap::ArgAction::Set)]
     pmtudisc: bool,
-    #[arg(long, value_parser = parse_bool_flag)]
+    #[arg(long, value_parser = parse_bool_flag, action = clap::ArgAction::Set)]
     up: Option<bool>,
 }
 
@@ -170,7 +170,7 @@ struct VlanArgs {
     interface: Option<String>,
     #[arg(long)]
     vlan_id: Option<u16>,
-    #[arg(long, value_parser = parse_bool_flag)]
+    #[arg(long, value_parser = parse_bool_flag, action = clap::ArgAction::Set)]
     up: Option<bool>,
 }
 
@@ -357,28 +357,28 @@ enum Command {
         /// Interface name
         interface: String,
         /// New state
-        #[arg(value_parser = parse_bool_flag)]
+        #[arg(value_parser = parse_bool_flag, action = clap::ArgAction::Set)]
         up: bool,
     },
     /// Enable or disable promiscuous mode
     SetPromisc {
         /// Interface name
         interface: String,
-        #[arg(value_parser = parse_bool_flag)]
+        #[arg(value_parser = parse_bool_flag, action = clap::ArgAction::Set)]
         enable: bool,
     },
     /// Enable or disable all-multicast mode
     SetAllMulticast {
         /// Interface name
         interface: String,
-        #[arg(value_parser = parse_bool_flag)]
+        #[arg(value_parser = parse_bool_flag, action = clap::ArgAction::Set)]
         enable: bool,
     },
     /// Enable or disable ARP
     SetArp {
         /// Interface name
         interface: String,
-        #[arg(value_parser = parse_bool_flag)]
+        #[arg(value_parser = parse_bool_flag, action = clap::ArgAction::Set)]
         enable: bool,
     },
     /// Set the interface MTU

@@ -170,7 +170,7 @@ dependencies = [
 
 [[package]]
 name = "ftth-rtnl"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "clap",
  "ftth-common",

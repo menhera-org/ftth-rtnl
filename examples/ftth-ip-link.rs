@@ -544,7 +544,7 @@ fn run_set_mac(client: &RtnlClient, interface: &str, mac: &str) -> io::Result<()
     let mac_addr = parse_mac(mac)?;
     let link_client = client.link();
     let iface = link_client.interface_get_by_name(interface)?;
-    link_client.mac_addr_set(iface.if_id, mac_addr)?;
+    link_client.mac_addr_set(iface.if_id, iface.link_layer_type, mac_addr)?;
     println!("Interface {} MAC set to {}", iface.if_name, mac_addr);
     Ok(())
 }

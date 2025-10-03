@@ -7,7 +7,7 @@ use futures::TryStreamExt;
 use std::fmt::{Debug, Display};
 use std::io::{self, ErrorKind};
 
-use netlink_packet_route::link::LinkFlags;
+use netlink_packet_route::link::{LinkFlags, LinkHeader, LinkLayerType};
 use rtnetlink::{LinkMessageBuilder, LinkUnspec};
 
 pub(crate) type Client = AsyncWorldClient<RtnlLinkRequest, RtnlLinkResponse>;
@@ -54,23 +54,54 @@ impl Display for MacAddr {
 pub struct Interface {
     pub if_name: String,
     pub if_id: u32,
+    pub link_layer_type: LinkLayerType,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub enum RtnlLinkRequest {
     InterfaceList,
-    InterfaceGet { if_id: u32 },
-    InterfaceGetByName { if_name: String },
-    MacAddrGet { if_id: u32 },
-    MacAddrSet { if_id: u32, mac_addr: MacAddr },
-    MtuGet { if_id: u32 },
-    InterfaceSetAdmin { if_id: u32, up: bool },
-    InterfaceSetPromisc { if_id: u32, enable: bool },
-    InterfaceSetArp { if_id: u32, enable: bool },
-    InterfaceSetMtu { if_id: u32, mtu: u32 },
-    InterfaceRename { if_id: u32, if_name: String },
-    InterfaceSetAllMulticast { if_id: u32, enable: bool },
+    InterfaceGet {
+        if_id: u32,
+    },
+    InterfaceGetByName {
+        if_name: String,
+    },
+    MacAddrGet {
+        if_id: u32,
+    },
+    MacAddrSet {
+        if_id: u32,
+        link_layer_type: LinkLayerType,
+        mac_addr: MacAddr,
+    },
+    MtuGet {
+        if_id: u32,
+    },
+    InterfaceSetAdmin {
+        if_id: u32,
+        up: bool,
+    },
+    InterfaceSetPromisc {
+        if_id: u32,
+        enable: bool,
+    },
+    InterfaceSetArp {
+        if_id: u32,
+        enable: bool,
+    },
+    InterfaceSetMtu {
+        if_id: u32,
+        mtu: u32,
+    },
+    InterfaceRename {
+        if_id: u32,
+        if_name: String,
+    },
+    InterfaceSetAllMulticast {
+        if_id: u32,
+        enable: bool,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -78,6 +109,7 @@ pub enum RtnlLinkRequest {
 pub enum RtnlLinkResponse {
     Success,
     Failed,
+    FailedWithMessage(String),
     NotImplemented,
     NotFound,
     InterfaceList(Vec<Interface>),
@@ -205,10 +237,17 @@ impl RtnlLinkClient {
         }
     }
 
-    pub fn mac_addr_set(&self, if_id: u32, mac_addr: MacAddr) -> io::Result<()> {
-        let res = self
-            .client
-            .send_request(RtnlLinkRequest::MacAddrSet { if_id, mac_addr })?;
+    pub fn mac_addr_set(
+        &self,
+        if_id: u32,
+        link_layer_type: LinkLayerType,
+        mac_addr: MacAddr,
+    ) -> io::Result<()> {
+        let res = self.client.send_request(RtnlLinkRequest::MacAddrSet {
+            if_id,
+            link_layer_type,
+            mac_addr,
+        })?;
         handle_status_response("Set MAC address", res)
     }
 
@@ -246,6 +285,9 @@ fn handle_status_response(op: &str, response: RtnlLinkResponse) -> io::Result<()
             format!("{}: interface not found", op),
         )),
         RtnlLinkResponse::Failed => Err(io::Error::other(format!("{} failed", op))),
+        RtnlLinkResponse::FailedWithMessage(msg) => {
+            Err(io::Error::other(format!("{} failed: {}", op, msg)))
+        }
         RtnlLinkResponse::NotImplemented => Err(io::Error::new(
             ErrorKind::Unsupported,
             format!("{} not implemented", op),
@@ -260,12 +302,24 @@ fn handle_status_response(op: &str, response: RtnlLinkResponse) -> io::Result<()
 async fn apply_link_set<F>(
     handle: &rtnetlink::LinkHandle,
     if_id: u32,
+    link_layer_type: Option<LinkLayerType>,
     op: F,
 ) -> Result<(), rtnetlink::Error>
 where
     F: FnOnce(LinkMessageBuilder<LinkUnspec>) -> LinkMessageBuilder<LinkUnspec>,
 {
-    let builder = LinkMessageBuilder::<LinkUnspec>::new().index(if_id);
+    let builder = LinkMessageBuilder::<LinkUnspec>::new();
+    let builder = if let Some(link_layer_type) = link_layer_type {
+        let mut header = LinkHeader::default();
+        header.index = if_id;
+        header.link_layer_type = link_layer_type;
+        builder.set_header(header)
+    } else {
+        builder
+    };
+
+    let builder = builder.index(if_id);
+
     let message = op(builder).build();
     handle.set(message).execute().await
 }
@@ -278,13 +332,15 @@ fn map_link_result(result: Result<(), rtnetlink::Error>, op: &str, if_id: u32) -
             if io_err.kind() == ErrorKind::NotFound {
                 RtnlLinkResponse::NotFound
             } else {
-                log::warn!("Failed to {} for ifindex {}: {}", op, if_id, io_err);
-                RtnlLinkResponse::Failed
+                let message = io_err.to_string();
+                log::warn!("Failed to {} for ifindex {}: {}", op, if_id, message);
+                RtnlLinkResponse::FailedWithMessage(message)
             }
         }
         Err(err) => {
-            log::warn!("Failed to {} for ifindex {}: {}", op, if_id, err);
-            RtnlLinkResponse::Failed
+            let message = err.to_string();
+            log::warn!("Failed to {} for ifindex {}: {}", op, if_id, message);
+            RtnlLinkResponse::FailedWithMessage(message)
         }
     }
 }
@@ -312,6 +368,7 @@ pub(crate) async fn run_server(mut server: Server, mut handle: rtnetlink::LinkHa
                         respond(RtnlLinkResponse::Interface(Interface {
                             if_id,
                             if_name: name,
+                            link_layer_type: response.header.link_layer_type,
                         }));
                         continue 'reqloop;
                     }
@@ -327,9 +384,22 @@ pub(crate) async fn run_server(mut server: Server, mut handle: rtnetlink::LinkHa
                         continue;
                     }
 
+                    let name = response
+                        .attributes
+                        .iter()
+                        .find_map(|attr| {
+                            if let netlink_packet_route::link::LinkAttribute::IfName(name) = attr {
+                                Some(name.clone())
+                            } else {
+                                None
+                            }
+                        })
+                        .unwrap_or_else(|| if_name.to_owned());
+
                     respond(RtnlLinkResponse::Interface(Interface {
                         if_id: if_index,
-                        if_name: if_name.to_owned(),
+                        if_name: name,
+                        link_layer_type: response.header.link_layer_type,
                     }));
                     continue 'reqloop;
                 }
@@ -403,20 +473,27 @@ pub(crate) async fn run_server(mut server: Server, mut handle: rtnetlink::LinkHa
                         interfaces.push(Interface {
                             if_id: if_index,
                             if_name: name,
+                            link_layer_type: response.header.link_layer_type,
                         });
                     }
                 }
                 respond(RtnlLinkResponse::InterfaceList(interfaces));
             }
-            RtnlLinkRequest::MacAddrSet { if_id, mac_addr } => {
+            RtnlLinkRequest::MacAddrSet {
+                if_id,
+                link_layer_type,
+                mac_addr,
+            } => {
                 if if_id == 0 {
                     respond(RtnlLinkResponse::NotFound);
                     continue 'reqloop;
                 }
 
                 let mac_bytes = mac_addr.inner.to_vec();
-                let result =
-                    apply_link_set(&handle, if_id, |builder| builder.address(mac_bytes)).await;
+                let result = apply_link_set(&handle, if_id, Some(link_layer_type), |builder| {
+                    builder.address(mac_bytes)
+                })
+                .await;
                 respond(map_link_result(result, "set MAC address", if_id));
             }
             RtnlLinkRequest::InterfaceSetAdmin { if_id, up } => {
@@ -430,7 +507,7 @@ pub(crate) async fn run_server(mut server: Server, mut handle: rtnetlink::LinkHa
                 } else {
                     "set interface down"
                 };
-                let result = apply_link_set(&handle, if_id, |builder| {
+                let result = apply_link_set(&handle, if_id, None, |builder| {
                     if up { builder.up() } else { builder.down() }
                 })
                 .await;
@@ -449,7 +526,8 @@ pub(crate) async fn run_server(mut server: Server, mut handle: rtnetlink::LinkHa
                     "disable promiscuous mode"
                 };
                 let result =
-                    apply_link_set(&handle, if_id, |builder| builder.promiscuous(enable)).await;
+                    apply_link_set(&handle, if_id, None, |builder| builder.promiscuous(enable))
+                        .await;
 
                 respond(map_link_result(result, op_desc, if_id));
             }
@@ -460,7 +538,8 @@ pub(crate) async fn run_server(mut server: Server, mut handle: rtnetlink::LinkHa
                 }
 
                 let op_desc = if enable { "enable ARP" } else { "disable ARP" };
-                let result = apply_link_set(&handle, if_id, |builder| builder.arp(enable)).await;
+                let result =
+                    apply_link_set(&handle, if_id, None, |builder| builder.arp(enable)).await;
 
                 respond(map_link_result(result, op_desc, if_id));
             }
@@ -470,7 +549,7 @@ pub(crate) async fn run_server(mut server: Server, mut handle: rtnetlink::LinkHa
                     continue 'reqloop;
                 }
 
-                let result = apply_link_set(&handle, if_id, |builder| builder.mtu(mtu)).await;
+                let result = apply_link_set(&handle, if_id, None, |builder| builder.mtu(mtu)).await;
                 respond(map_link_result(result, "set MTU", if_id));
             }
             RtnlLinkRequest::InterfaceRename { if_id, if_name } => {
@@ -480,7 +559,8 @@ pub(crate) async fn run_server(mut server: Server, mut handle: rtnetlink::LinkHa
                 }
 
                 let new_name = if_name.clone();
-                let result = apply_link_set(&handle, if_id, |builder| builder.name(new_name)).await;
+                let result =
+                    apply_link_set(&handle, if_id, None, |builder| builder.name(new_name)).await;
                 let op_desc = format!("rename interface to {}", if_name);
                 respond(map_link_result(result, &op_desc, if_id));
             }

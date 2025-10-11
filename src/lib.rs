@@ -4,6 +4,9 @@ pub mod neighbor;
 pub mod route;
 pub mod virtual_interface;
 
+use std::any::Any;
+use std::sync::{Arc, Mutex};
+
 pub use ipnet::{IpNet, Ipv4Net, Ipv6Net};
 pub use neighbor::{NeighborDelete, NeighborEntry};
 pub use netlink_packet_route::address::AddressScope;
@@ -26,6 +29,9 @@ pub struct RtnlClient {
     neighbor: neighbor::RtnlNeighborClient,
     route: route::RtnlRouteClient,
     virtual_interface: virtual_interface::RtnlVirtualInterfaceClient,
+    
+    #[allow(dead_code)]
+    receiver: Arc<Mutex<Option<Box<dyn Any + Send>>>>,
 }
 
 impl RtnlClient {
@@ -35,6 +41,9 @@ impl RtnlClient {
         let (neighbor_tx, neighbor_rx) = create_pair();
         let (route_tx, route_rx) = create_pair();
         let (virtual_interface_tx, virtual_interface_rx) = create_pair();
+
+        let receiver_container = Arc::new(Mutex::new(None));
+        let receiver_container_clone = receiver_container.clone();
 
         std::thread::spawn(move || {
             let rt = match tokio::runtime::Builder::new_multi_thread()
@@ -49,9 +58,12 @@ impl RtnlClient {
             };
 
             let _ = rt.block_on(async {
-                #[allow(unused_variables)]
                 let (connection, handle, receiver) = rtnetlink::new_connection()?;
 
+                {
+                    *(receiver_container_clone.lock().map_err(|_e| std::io::Error::other("Poison error"))?) = Some(Box::new(receiver) as Box<dyn Any + Send>);
+                }
+                
                 tokio::spawn(connection);
 
                 let mut futures = Vec::new();
@@ -77,6 +89,7 @@ impl RtnlClient {
             virtual_interface: virtual_interface::RtnlVirtualInterfaceClient::new(
                 virtual_interface_tx,
             ),
+            receiver: receiver_container,
         }
     }
 

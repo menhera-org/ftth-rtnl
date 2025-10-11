@@ -333,13 +333,13 @@ fn map_link_result(result: Result<(), rtnetlink::Error>, op: &str, if_id: u32) -
                 RtnlLinkResponse::NotFound
             } else {
                 let message = io_err.to_string();
-                log::warn!("Failed to {} for ifindex {}: {}", op, if_id, message);
+                tracing::warn!("Failed to {} for ifindex {}: {}", op, if_id, message);
                 RtnlLinkResponse::FailedWithMessage(message)
             }
         }
         Err(err) => {
             let message = err.to_string();
-            log::warn!("Failed to {} for ifindex {}: {}", op, if_id, message);
+            tracing::warn!("Failed to {} for ifindex {}: {}", op, if_id, message);
             RtnlLinkResponse::FailedWithMessage(message)
         }
     }

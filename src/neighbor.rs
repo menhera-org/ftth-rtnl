@@ -5,7 +5,8 @@ use std::net::IpAddr;
 
 use ftth_common::channel::{AsyncWorldClient, AsyncWorldServer};
 use futures::TryStreamExt;
-use log::warn;
+
+use tracing::warn;
 use netlink_packet_route::neighbour::{NeighbourAddress, NeighbourAttribute, NeighbourMessage};
 use netlink_packet_route::{AddressFamily, route::RouteType};
 

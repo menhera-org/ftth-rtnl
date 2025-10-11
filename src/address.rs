@@ -297,7 +297,7 @@ pub(crate) async fn run_server(mut server: Server, handle: rtnetlink::AddressHan
                         respond(RtnlAddressResponse::Success);
                     }
                     Err(err) => {
-                        log::warn!(
+                        tracing::warn!(
                             "Failed to add IPv4 address {}/{} on ifindex {}: {}",
                             addr,
                             prefix_len,
@@ -329,7 +329,7 @@ pub(crate) async fn run_server(mut server: Server, handle: rtnetlink::AddressHan
                         respond(RtnlAddressResponse::Success);
                     }
                     Err(err) => {
-                        log::warn!(
+                        tracing::warn!(
                             "Failed to add IPv6 address {}/{} on ifindex {}: {}",
                             addr,
                             prefix_len,
@@ -362,7 +362,7 @@ pub(crate) async fn run_server(mut server: Server, handle: rtnetlink::AddressHan
                         ) {
                             respond(RtnlAddressResponse::NotFound);
                         } else {
-                            log::warn!(
+                            tracing::warn!(
                                 "Failed to delete IPv4 address {}/{} on ifindex {}: {}",
                                 addr,
                                 prefix_len,
@@ -373,7 +373,7 @@ pub(crate) async fn run_server(mut server: Server, handle: rtnetlink::AddressHan
                         }
                     }
                     Err(err) => {
-                        log::warn!(
+                        tracing::warn!(
                             "Failed to delete IPv4 address {}/{} on ifindex {}: {}",
                             addr,
                             prefix_len,
@@ -406,7 +406,7 @@ pub(crate) async fn run_server(mut server: Server, handle: rtnetlink::AddressHan
                         ) {
                             respond(RtnlAddressResponse::NotFound);
                         } else {
-                            log::warn!(
+                            tracing::warn!(
                                 "Failed to delete IPv6 address {}/{} on ifindex {}: {}",
                                 addr,
                                 prefix_len,
@@ -417,7 +417,7 @@ pub(crate) async fn run_server(mut server: Server, handle: rtnetlink::AddressHan
                         }
                     }
                     Err(err) => {
-                        log::warn!(
+                        tracing::warn!(
                             "Failed to delete IPv6 address {}/{} on ifindex {}: {}",
                             addr,
                             prefix_len,

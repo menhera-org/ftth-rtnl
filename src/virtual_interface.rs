@@ -220,7 +220,7 @@ pub(crate) async fn run_server(mut server: Server, mut handle: rtnetlink::LinkHa
                 let message = match build_create_message(&spec) {
                     Ok(msg) => msg,
                     Err(err) => {
-                        log::warn!("Failed to build virtual interface {}: {}", spec.name, err);
+                        tracing::warn!("Failed to build virtual interface {}: {}", spec.name, err);
                         respond(RtnlVirtualInterfaceResponse::Failed);
                         continue;
                     }
@@ -229,7 +229,7 @@ pub(crate) async fn run_server(mut server: Server, mut handle: rtnetlink::LinkHa
                 match handle.add(message).execute().await {
                     Ok(()) => respond(RtnlVirtualInterfaceResponse::Success),
                     Err(rtnetlink::Error::NetlinkError(err_msg)) => {
-                        log::warn!(
+                        tracing::warn!(
                             "Netlink error creating virtual interface {}: {}",
                             spec.name,
                             err_msg
@@ -237,7 +237,7 @@ pub(crate) async fn run_server(mut server: Server, mut handle: rtnetlink::LinkHa
                         respond(netlink_error_to_response(err_msg.to_io()));
                     }
                     Err(err) => {
-                        log::warn!("Failed to create virtual interface {}: {}", spec.name, err);
+                        tracing::warn!("Failed to create virtual interface {}: {}", spec.name, err);
                         respond(RtnlVirtualInterfaceResponse::Failed);
                     }
                 }
@@ -246,7 +246,7 @@ pub(crate) async fn run_server(mut server: Server, mut handle: rtnetlink::LinkHa
                 let message = match build_update_message(&update) {
                     Ok(msg) => msg,
                     Err(err) => {
-                        log::warn!(
+                        tracing::warn!(
                             "Failed to build virtual interface update for {}: {}",
                             update.if_id,
                             err
@@ -262,7 +262,7 @@ pub(crate) async fn run_server(mut server: Server, mut handle: rtnetlink::LinkHa
                         respond(netlink_error_to_response(err_msg.to_io()));
                     }
                     Err(err) => {
-                        log::warn!(
+                        tracing::warn!(
                             "Failed to configure virtual interface {}: {}",
                             update.if_id,
                             err
@@ -286,7 +286,7 @@ pub(crate) async fn run_server(mut server: Server, mut handle: rtnetlink::LinkHa
                         respond(RtnlVirtualInterfaceResponse::NotFound)
                     }
                     Err(err) => {
-                        log::warn!("Failed to delete virtual interface: {}", err);
+                        tracing::warn!("Failed to delete virtual interface: {}", err);
                         respond(RtnlVirtualInterfaceResponse::Failed);
                     }
                 }
@@ -296,7 +296,7 @@ pub(crate) async fn run_server(mut server: Server, mut handle: rtnetlink::LinkHa
                     Ok(Some(index)) => respond(RtnlVirtualInterfaceResponse::Index(index)),
                     Ok(None) => respond(RtnlVirtualInterfaceResponse::NotFound),
                     Err(err) => {
-                        log::warn!("Failed to resolve virtual interface {}: {}", name, err);
+                        tracing::warn!("Failed to resolve virtual interface {}: {}", name, err);
                         respond(RtnlVirtualInterfaceResponse::Failed);
                     }
                 }

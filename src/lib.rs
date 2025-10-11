@@ -5,7 +5,7 @@ pub mod route;
 pub mod virtual_interface;
 
 use std::any::Any;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 
 pub use ipnet::{IpNet, Ipv4Net, Ipv6Net};
 pub use neighbor::{NeighborDelete, NeighborEntry};
@@ -22,6 +22,9 @@ use ftth_common::channel::create_pair;
 
 use futures::{FutureExt, future::join_all};
 
+
+static CLIENT: OnceLock<RtnlClient> = OnceLock::new();
+
 #[derive(Debug, Clone)]
 pub struct RtnlClient {
     address: address::RtnlAddressClient,
@@ -36,6 +39,10 @@ pub struct RtnlClient {
 
 impl RtnlClient {
     pub fn new() -> Self {
+        CLIENT.get_or_init(|| Self::new_inner()).clone()
+    }
+
+    pub(crate) fn new_inner() -> Self {
         let (address_tx, address_rx) = create_pair();
         let (link_tx, link_rx) = create_pair();
         let (neighbor_tx, neighbor_rx) = create_pair();
@@ -52,7 +59,7 @@ impl RtnlClient {
             {
                 Ok(rt) => rt,
                 Err(e) => {
-                    log::error!("Tokio runtime building error: {}", e);
+                    tracing::error!("Tokio runtime building error: {}", e);
                     return;
                 }
             };
@@ -63,7 +70,7 @@ impl RtnlClient {
                 {
                     *(receiver_container_clone.lock().map_err(|_e| std::io::Error::other("Poison error"))?) = Some(Box::new(receiver) as Box<dyn Any + Send>);
                 }
-                
+
                 tokio::spawn(connection);
 
                 let mut futures = Vec::new();
@@ -76,6 +83,8 @@ impl RtnlClient {
                 );
 
                 join_all(futures).await;
+
+
 
                 Ok::<(), std::io::Error>(())
             });
